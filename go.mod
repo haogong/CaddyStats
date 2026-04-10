@@ -1,4 +1,4 @@
-module github.com/yourusername/naivestats
+module github.com/haogong/CaddyStats
 
 go 1.21.0
 
