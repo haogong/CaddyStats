@@ -18,8 +18,27 @@ import (
 func init() {
 	startTime = time.Now()
 	caddy.RegisterModule(NaiveStat{})
-	caddy.RegisterAdminHTTPHandler("/naive_stats", http.HandlerFunc(handleStats))
+	caddy.RegisterModule(NaiveStatAdmin{})
 	httpcaddyfile.RegisterHandlerDirective("naive_stat", parseCaddyfile)
+}
+
+// NaiveStatAdmin is an admin API module that exposes /naive_stats endpoint.
+type NaiveStatAdmin struct{}
+
+func (NaiveStatAdmin) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID:  "admin.api.naive_stats",
+		New: func() caddy.Module { return new(NaiveStatAdmin) },
+	}
+}
+
+func (n *NaiveStatAdmin) Routes() []caddy.AdminRoute {
+	return []caddy.AdminRoute{
+		{
+			Pattern: "/naive_stats",
+			Handler: caddy.AdminHandlerFunc(handleStats),
+		},
+	}
 }
 
 // NaiveStat implements a traffic counter for NaiveProxy requests.
@@ -151,10 +170,10 @@ func (cc *countConn) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func handleStats(w http.ResponseWriter, r *http.Request) {
+func handleStats(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+		return nil
 	}
 
 	resp := map[string]interface{}{
@@ -165,5 +184,5 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	return json.NewEncoder(w).Encode(resp)
 }
