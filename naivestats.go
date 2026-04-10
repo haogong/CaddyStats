@@ -1,4 +1,4 @@
-package caddystat
+package naivestats
 
 import (
 	"bufio"
@@ -10,33 +10,48 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
 func init() {
 	startTime = time.Now()
-	caddy.RegisterModule(Stat{})
-	caddy.RegisterAdminHTTPHandler("/stats", http.HandlerFunc(handleStats))
+	caddy.RegisterModule(NaiveStat{})
+	caddy.RegisterAdminHTTPHandler("/naive_stats", http.HandlerFunc(handleStats))
+	httpcaddyfile.RegisterHandlerDirective("naive_stat", parseCaddyfile)
 }
 
-// Stat implements a simple traffic counter for HTTP requests.
-type Stat struct{}
+// NaiveStat implements a traffic counter for NaiveProxy requests.
+type NaiveStat struct{}
 
 // CaddyModule returns the Caddy module information.
-func (Stat) CaddyModule() caddy.ModuleInfo {
+func (NaiveStat) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.stat",
-		New: func() caddy.Module { return new(Stat) },
+		ID:  "http.handlers.naive_stat",
+		New: func() caddy.Module { return new(NaiveStat) },
 	}
 }
 
 // Provision sets up the module.
-func (s *Stat) Provision(ctx caddy.Context) error {
+func (s *NaiveStat) Provision(ctx caddy.Context) error {
 	return nil
 }
 
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler.
+func (s *NaiveStat) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	return nil
+}
+
+// parseCaddyfile sets up the handler from Caddyfile tokens.
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+	var s NaiveStat
+	err := s.UnmarshalCaddyfile(h.Dispenser)
+	return &s, err
+}
+
 // ServeHTTP implements caddyhttp.MiddlewareHandler.
-func (s *Stat) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+func (s *NaiveStat) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
 	atomic.AddUint64(&requestCount, 1)
 
 	r.Body = &countReader{r: r.Body}
@@ -47,8 +62,9 @@ func (s *Stat) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.
 
 // Interface guards
 var (
-	_ caddy.Provisioner           = (*Stat)(nil)
-	_ caddyhttp.MiddlewareHandler = (*Stat)(nil)
+	_ caddy.Provisioner           = (*NaiveStat)(nil)
+	_ caddyhttp.MiddlewareHandler = (*NaiveStat)(nil)
+	_ caddyfile.Unmarshaler       = (*NaiveStat)(nil)
 )
 
 var (
@@ -101,10 +117,38 @@ func (cw *countWriter) Flush() {
 }
 
 func (cw *countWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if h, ok := cw.w.(http.Hijacker); ok {
-		return h.Hijack()
+	h, ok := cw.w.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
 	}
-	return nil, nil, http.ErrNotSupported
+	conn, _, err := h.Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	cc := &countConn{Conn: conn}
+	brw := bufio.NewReadWriter(bufio.NewReader(cc), bufio.NewWriter(cc))
+	return cc, brw, nil
+}
+
+// countConn wraps net.Conn to count bytes on hijacked connections (H1 CONNECT).
+type countConn struct {
+	net.Conn
+}
+
+func (cc *countConn) Read(p []byte) (int, error) {
+	n, err := cc.Conn.Read(p)
+	if n > 0 {
+		atomic.AddUint64(&upstreamBytes, uint64(n))
+	}
+	return n, err
+}
+
+func (cc *countConn) Write(p []byte) (int, error) {
+	n, err := cc.Conn.Write(p)
+	if n > 0 {
+		atomic.AddUint64(&downstreamBytes, uint64(n))
+	}
+	return n, err
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
