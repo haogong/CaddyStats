@@ -129,6 +129,10 @@ func (cw *countWriter) WriteHeader(statusCode int) {
 	cw.w.WriteHeader(statusCode)
 }
 
+func (cw *countWriter) Unwrap() http.ResponseWriter {
+	return cw.w
+}
+
 func (cw *countWriter) Flush() {
 	if f, ok := cw.w.(http.Flusher); ok {
 		f.Flush()
