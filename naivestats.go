@@ -72,7 +72,7 @@ func (s *NaiveStat) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	atomic.AddUint64(&requestCount, 1)
 
 	r.Body = &countReader{r: r.Body}
-	cw := &countWriter{w: w}
+	cw := newCountWriter(w)
 
 	return next.ServeHTTP(cw, r)
 }
@@ -108,27 +108,36 @@ func (cr *countReader) Close() error {
 }
 
 type countWriter struct {
-	w http.ResponseWriter
+	*caddyhttp.ResponseWriterWrapper
 }
 
-func (cw *countWriter) Header() http.Header {
-	return cw.w.Header()
+func newCountWriter(w http.ResponseWriter) *countWriter {
+	return &countWriter{
+		ResponseWriterWrapper: &caddyhttp.ResponseWriterWrapper{ResponseWriter: w},
+	}
 }
 
 func (cw *countWriter) Write(p []byte) (int, error) {
-	n, err := cw.w.Write(p)
+	n, err := cw.ResponseWriterWrapper.Write(p)
 	if n > 0 {
 		atomic.AddUint64(&downstreamBytes, uint64(n))
 	}
 	return n, err
 }
 
-func (cw *countWriter) WriteHeader(statusCode int) {
-	cw.w.WriteHeader(statusCode)
+func (cw *countWriter) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := cw.ResponseWriterWrapper.ResponseWriter.(io.ReaderFrom); ok {
+		n, err := rf.ReadFrom(r)
+		if n > 0 {
+			atomic.AddUint64(&downstreamBytes, uint64(n))
+		}
+		return n, err
+	}
+	return io.Copy(struct{ io.Writer }{cw}, r)
 }
 
-func (cw *countWriter) Unwrap() http.ResponseWriter {
-	return cw.w
+func (cw *countWriter) Flush() {
+	_ = http.NewResponseController(cw.ResponseWriterWrapper.ResponseWriter).Flush()
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) error {
