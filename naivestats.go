@@ -131,10 +131,6 @@ func (cw *countWriter) Unwrap() http.ResponseWriter {
 	return cw.w
 }
 
-func (cw *countWriter) Flush() {
-	_ = http.NewResponseController(cw.w).Flush()
-}
-
 func handleStats(w http.ResponseWriter, r *http.Request) error {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
