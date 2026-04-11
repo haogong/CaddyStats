@@ -1,10 +1,8 @@
 package naivestats
 
 import (
-	"bufio"
 	"encoding/json"
 	"io"
-	"net"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -134,44 +132,7 @@ func (cw *countWriter) Unwrap() http.ResponseWriter {
 }
 
 func (cw *countWriter) Flush() {
-	if f, ok := cw.w.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (cw *countWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	h, ok := cw.w.(http.Hijacker)
-	if !ok {
-		return nil, nil, http.ErrNotSupported
-	}
-	conn, _, err := h.Hijack()
-	if err != nil {
-		return nil, nil, err
-	}
-	cc := &countConn{Conn: conn}
-	brw := bufio.NewReadWriter(bufio.NewReader(cc), bufio.NewWriter(cc))
-	return cc, brw, nil
-}
-
-// countConn wraps net.Conn to count bytes on hijacked connections (H1 CONNECT).
-type countConn struct {
-	net.Conn
-}
-
-func (cc *countConn) Read(p []byte) (int, error) {
-	n, err := cc.Conn.Read(p)
-	if n > 0 {
-		atomic.AddUint64(&upstreamBytes, uint64(n))
-	}
-	return n, err
-}
-
-func (cc *countConn) Write(p []byte) (int, error) {
-	n, err := cc.Conn.Write(p)
-	if n > 0 {
-		atomic.AddUint64(&downstreamBytes, uint64(n))
-	}
-	return n, err
+	_ = http.NewResponseController(cw.w).Flush()
 }
 
 func handleStats(w http.ResponseWriter, r *http.Request) error {
